@@ -1,0 +1,33 @@
+{
+  "name": "yt-gmail-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Gmail, Google Drive, and Google Calendar — search, read, send, and manage threads, files, and events.",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "yt-gmail-mcp": "index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "keywords": [
+    "mcp",
+    "gmail",
+    "google-drive",
+    "google-calendar",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yentsun/gmail-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "google-auth-library": "^9.0.0",
+    "googleapis": "^140.0.0",
+    "open": "^10.0.0",
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0"
+  }
+}
