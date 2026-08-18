@@ -2,6 +2,8 @@
 
 MCP server for **Gmail**, **Google Drive**, **Google Calendar**, and **Google Tasks** — search, read, send, and manage threads, files, events, and to-dos.
 
+Implements the [Model Context Protocol](https://modelcontextprotocol.io) specification: it runs over the stdio transport, speaks JSON-RPC 2.0, negotiates the protocol version on `initialize`, advertises `tools` capabilities, and describes each tool with a JSON Schema. Protocol version negotiation is handled by the `@modelcontextprotocol/sdk` `Server` class, which defaults to the latest supported version (`2025-11-25`).
+
 ## Tools
 
 ### Gmail

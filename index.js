@@ -1109,7 +1109,11 @@ async function main() {
 
     const server = new Server(
         { name: "yt-gmail-mcp", version: "0.1.0" },
-        { capabilities: { tools: {} } }
+        {
+            capabilities: { tools: {} },
+            instructions:
+                "MCP server for Gmail, Google Drive, Google Calendar, and Google Tasks. Read/write email with search_threads, get_thread, create_draft, send_email; manage Drive files with drive_search/drive_get_file/drive_download; manage events with cal_*; manage to-dos with task_*.",
+        }
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
