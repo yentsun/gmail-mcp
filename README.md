@@ -1,6 +1,6 @@
 # yt-gmail-mcp
 
-MCP server for **Gmail**, **Google Drive**, and **Google Calendar** — search, read, send, and manage threads, files, and events.
+MCP server for **Gmail**, **Google Drive**, **Google Calendar**, and **Google Tasks** — search, read, send, and manage threads, files, events, and to-dos.
 
 ## Tools
 
@@ -38,6 +38,18 @@ MCP server for **Gmail**, **Google Drive**, and **Google Calendar** — search, 
 | `cal_delete_event` | Delete an event |
 | `cal_list_calendars` | List all accessible calendars |
 
+### Google Tasks
+
+| Tool | Description |
+|------|-------------|
+| `task_list_lists` | List all task lists |
+| `task_list` | List tasks in a list (`@default` by default) |
+| `task_create` | Create a task (title, notes, due date) |
+| `task_update` | Update title/notes/due/status (also marks complete) |
+| `task_delete` | Delete a task |
+| `task_move` | Reorder/move a task (parent/previous) |
+| `task_clear` | Clear completed tasks in a list |
+
 ## Setup
 
 ### 1. Google Cloud Console
@@ -48,6 +60,7 @@ MCP server for **Gmail**, **Google Drive**, and **Google Calendar** — search, 
    - **Gmail API**
    - **Google Drive API** (if using Drive tools)
    - **Google Calendar API** (if using Calendar tools)
+   - **Google Tasks API** (if using Tasks tools)
 4. Create an **OAuth 2.0 Client ID** of type **Desktop application**
 5. Add `http://localhost:3000/oauth2callback` as an authorized redirect URI
 6. Download the client configuration JSON
