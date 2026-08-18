@@ -150,6 +150,14 @@ The OAuth callback listener needs port 3000 (or your `GMAIL_MCP_OAUTH_PORT`). Ki
 
 OAuth refresh tokens for unverified Testing-mode apps expire after 7 days. Run `npx yt-gmail-mcp auth` to re-authenticate. For production, publish your OAuth app through Google's verification process.
 
+### Re-auth succeeds but Tasks calls fail
+
+If re-auth completed but Tasks tools still error, the Tasks API itself may be disabled in the GCP project. Enable it at:
+
+https://console.developers.google.com/apis/api/tasks.googleapis.com/overview?project=496352139179
+
+It can take a minute to propagate — retry after enabling.
+
 ## License
 
 MIT
