@@ -1067,8 +1067,8 @@ function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, cr
                 const resp = await tasks.tasks.move({
                     tasklist: a.tasklist,
                     task: a.task,
-                    parent: a.parent,
-                    previous: a.previous,
+                    parent: a.parent || undefined,
+                    previous: a.previous || undefined,
                 });
                 return {
                     content: [{
@@ -1157,7 +1157,8 @@ async function main() {
 }
 
 const isMain =
-    process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url);
+    process.argv[1] &&
+    fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isMain) {
     main().catch((e) => {
