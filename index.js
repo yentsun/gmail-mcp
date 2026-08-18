@@ -15,6 +15,7 @@ import path from "path";
 import http from "http";
 import open from "open";
 import os from "os";
+import { fileURLToPath } from "url";
 
 
 const OAUTH_PORT = parseInt(process.env.GMAIL_MCP_OAUTH_PORT || "3000", 10);
@@ -34,6 +35,7 @@ const SCOPES = [
     "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
 ];
 
 let oauth2Client;
@@ -303,6 +305,10 @@ function htmlToText(html) {
         .trim();
 }
 
+function normalizeDue(s) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00.000Z` : s;
+}
+
 
 const SearchThreadsSchema = z.object({
     query: z
@@ -409,6 +415,49 @@ const CalDeleteEventSchema = z.object({
 
 const CalListCalendarsSchema = z.object({});
 
+const TaskListListsSchema = z.object({});
+
+const TaskListSchema = z.object({
+    tasklist: z.string().optional().default("@default").describe("Task list id (default: '@default')"),
+    status: z.enum(["needsAction", "completed"]).optional().describe("Filter by status"),
+    dueMax: z.string().optional().describe("Upper bound on due date: YYYY-MM-DD (normalized to UTC midnight) or full RFC 3339 timestamp"),
+    dueMin: z.string().optional().describe("Lower bound on due date: YYYY-MM-DD (normalized to UTC midnight) or full RFC 3339 timestamp"),
+    maxResults: z.number().int().min(1).max(100).optional().default(20),
+    pageToken: z.string().optional(),
+});
+
+const TaskCreateSchema = z.object({
+    tasklist: z.string().optional().default("@default"),
+    title: z.string(),
+    notes: z.string().optional(),
+    due: z.string().optional().describe("Due date YYYY-MM-DD (normalized to UTC midnight T00:00:00.000Z) or full RFC 3339 timestamp"),
+});
+
+const TaskUpdateSchema = z.object({
+    tasklist: z.string().optional().default("@default"),
+    task: z.string().describe("Task id"),
+    title: z.string().optional(),
+    notes: z.string().optional(),
+    due: z.string().optional().describe("Due date YYYY-MM-DD (normalized to UTC midnight T00:00:00.000Z) or full RFC 3339 timestamp"),
+    status: z.enum(["needsAction", "completed"]).optional().describe("Set to 'completed' to mark done"),
+});
+
+const TaskDeleteSchema = z.object({
+    tasklist: z.string().optional().default("@default"),
+    task: z.string().describe("Task id"),
+});
+
+const TaskMoveSchema = z.object({
+    tasklist: z.string().optional().default("@default"),
+    task: z.string().describe("Task id"),
+    parent: z.string().optional().describe("New parent task id, or empty to make a top-level task"),
+    previous: z.string().optional().describe("Task id to position after"),
+});
+
+const TaskClearSchema = z.object({
+    tasklist: z.string().optional().default("@default"),
+});
+
 const TOOLS = [
     {
         name: "search_threads",
@@ -508,32 +557,46 @@ const TOOLS = [
         description: "List all Google Calendars accessible to the user (id, summary, accessRole, timeZone).",
         inputSchema: zodToJsonSchema(CalListCalendarsSchema),
     },
+    {
+        name: "task_list_lists",
+        description: "List all Google Tasks task lists (id, title).",
+        inputSchema: zodToJsonSchema(TaskListListsSchema),
+    },
+    {
+        name: "task_list",
+        description: "List tasks in a task list ('@default' by default), with optional status/due filters and pagination.",
+        inputSchema: zodToJsonSchema(TaskListSchema),
+    },
+    {
+        name: "task_create",
+        description: "Create a Google Task (title, notes, due date, optional list id).",
+        inputSchema: zodToJsonSchema(TaskCreateSchema),
+    },
+    {
+        name: "task_update",
+        description: "Update title/notes/due/status of a task. Set status='completed' to mark done.",
+        inputSchema: zodToJsonSchema(TaskUpdateSchema),
+    },
+    {
+        name: "task_delete",
+        description: "Delete a Google Task.",
+        inputSchema: zodToJsonSchema(TaskDeleteSchema),
+    },
+    {
+        name: "task_move",
+        description: "Reorder or move a task (parent/previous).",
+        inputSchema: zodToJsonSchema(TaskMoveSchema),
+    },
+    {
+        name: "task_clear",
+        description: "Clear all completed tasks in a task list.",
+        inputSchema: zodToJsonSchema(TaskClearSchema),
+    },
 ];
 
 
-async function main() {
-    loadOAuthClient();
-
-    if (process.argv[2] === "auth") {
-        await authenticate();
-        console.error("Authentication completed.");
-        process.exit(0);
-    }
-
-    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-    const drive = google.drive({ version: "v3", auth: oauth2Client });
-    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
-
-    const server = new Server(
-        { name: "yt-gmail-mcp", version: "0.1.0" },
-        { capabilities: { tools: {} } }
-    );
-
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: TOOLS,
-    }));
-
-    const executeToolCall = async (name, args) => {
+function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, credentialsPath }) {
+    return async (name, args) => {
         switch (name) {
             case "search_threads": {
                     const a = SearchThreadsSchema.parse(args);
@@ -768,7 +831,7 @@ async function main() {
                         content: [
                             {
                                 type: "text",
-                                text: `Re-auth completed. New credentials written to ${CREDENTIALS_PATH}. The in-memory OAuth client has been refreshed.`,
+                                text: `Re-auth completed. New credentials written to ${credentialsPath}. The in-memory OAuth client has been refreshed.`,
                             },
                         ],
                     };
@@ -917,10 +980,154 @@ async function main() {
                     content: [{ type: "text", text: JSON.stringify(cals, null, 2) }],
                 };
             }
+            case "task_list_lists": {
+                TaskListListsSchema.parse(args);
+                const resp = await tasks.tasklists.list({});
+                const lists = (resp.data.items || []).map(l => ({
+                    id: l.id,
+                    title: l.title,
+                }));
+                return {
+                    content: [{ type: "text", text: JSON.stringify(lists, null, 2) }],
+                };
+            }
+            case "task_list": {
+                const a = TaskListSchema.parse(args);
+                const resp = await tasks.tasks.list({
+                    tasklist: a.tasklist,
+                    showCompleted: a.status ? a.status === "completed" : true,
+                    showHidden: a.status ? a.status === "completed" : false,
+                    dueMax: a.dueMax ? normalizeDue(a.dueMax) : undefined,
+                    dueMin: a.dueMin ? normalizeDue(a.dueMin) : undefined,
+                    maxResults: a.maxResults,
+                    pageToken: a.pageToken,
+                });
+                const items = (resp.data.items || []).filter(t =>
+                    !a.status || t.status === a.status
+                );
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({
+                            tasks: items,
+                            nextPageToken: resp.data.nextPageToken || null,
+                        }, null, 2),
+                    }],
+                };
+            }
+            case "task_create": {
+                const a = TaskCreateSchema.parse(args);
+                const resp = await tasks.tasks.insert({
+                    tasklist: a.tasklist,
+                    requestBody: {
+                        title: a.title,
+                        notes: a.notes,
+                        ...(a.due && { due: normalizeDue(a.due) }),
+                    },
+                });
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({ id: resp.data.id, title: resp.data.title, due: resp.data.due }, null, 2),
+                    }],
+                };
+            }
+            case "task_update": {
+                const a = TaskUpdateSchema.parse(args);
+                const cur = await tasks.tasks.get({ tasklist: a.tasklist, task: a.task });
+                const t = cur.data;
+                if (a.title !== undefined) t.title = a.title;
+                if (a.notes !== undefined) t.notes = a.notes;
+                if (a.due !== undefined) t.due = normalizeDue(a.due);
+                if (a.status !== undefined) t.status = a.status;
+                const resp = await tasks.tasks.update({
+                    tasklist: a.tasklist,
+                    task: a.task,
+                    requestBody: t,
+                });
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({ id: resp.data.id, title: resp.data.title, status: resp.data.status, due: resp.data.due }, null, 2),
+                    }],
+                };
+            }
+            case "task_delete": {
+                const a = TaskDeleteSchema.parse(args);
+                await tasks.tasks.delete({ tasklist: a.tasklist, task: a.task });
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Task ${a.task} deleted from list ${a.tasklist}.`,
+                    }],
+                };
+            }
+            case "task_move": {
+                const a = TaskMoveSchema.parse(args);
+                const resp = await tasks.tasks.move({
+                    tasklist: a.tasklist,
+                    task: a.task,
+                    parent: a.parent || undefined,
+                    previous: a.previous || undefined,
+                });
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({ id: resp.data.id, title: resp.data.title, position: resp.data.position }, null, 2),
+                    }],
+                };
+            }
+            case "task_clear": {
+                const a = TaskClearSchema.parse(args);
+                await tasks.tasks.clear({ tasklist: a.tasklist });
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Completed tasks cleared from list ${a.tasklist}.`,
+                    }],
+                };
+            }
             default:
                 throw new Error(`Unknown tool: ${name}`);
         }
     };
+}
+
+async function main() {
+    loadOAuthClient();
+
+    if (process.argv[2] === "auth") {
+        await authenticate();
+        console.error("Authentication completed.");
+        process.exit(0);
+    }
+
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    const drive = google.drive({ version: "v3", auth: oauth2Client });
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+    const tasks = google.tasks({ version: "v1", auth: oauth2Client });
+
+    const server = new Server(
+        { name: "yt-gmail-mcp", version: "0.1.0" },
+        {
+            capabilities: { tools: {} },
+            instructions:
+                "MCP server for Gmail, Google Drive, Google Calendar, and Google Tasks. Read/write email with search_threads, get_thread, create_draft, send_email; manage Drive files with drive_search/drive_get_file/drive_download; manage events with cal_*; manage to-dos with task_*.",
+        }
+    );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: TOOLS,
+    }));
+
+    const executeToolCall = createExecuteToolCall({
+        gmail,
+        drive,
+        calendar,
+        tasks,
+        authenticate,
+        credentialsPath: CREDENTIALS_PATH,
+    });
 
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const { name, arguments: args } = req.params;
@@ -949,7 +1156,47 @@ async function main() {
     await server.connect(transport);
 }
 
-main().catch((e) => {
-    console.error("Fatal:", e);
-    process.exit(1);
-});
+const isMain =
+    process.argv[1] &&
+    fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+    main().catch((e) => {
+        console.error("Fatal:", e);
+        process.exit(1);
+    });
+}
+
+export {
+    buildRawMessage,
+    extractContent,
+    getHeader,
+    htmlToText,
+    sanitizeHeader,
+    encodeHeader,
+    normalizeDue,
+    isAuthError,
+    createExecuteToolCall,
+    SearchThreadsSchema,
+    GetThreadSchema,
+    ThreadIdSchema,
+    LabelThreadSchema,
+    ListLabelsSchema,
+    ReauthSchema,
+    DraftSchema,
+    DriveSearchSchema,
+    DriveGetFileSchema,
+    DriveDownloadSchema,
+    CalListEventsSchema,
+    CalCreateEventSchema,
+    CalUpdateEventSchema,
+    CalDeleteEventSchema,
+    CalListCalendarsSchema,
+    TaskListListsSchema,
+    TaskListSchema,
+    TaskCreateSchema,
+    TaskUpdateSchema,
+    TaskDeleteSchema,
+    TaskMoveSchema,
+    TaskClearSchema,
+};

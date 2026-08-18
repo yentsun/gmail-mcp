@@ -1,11 +1,14 @@
 {
   "name": "yt-gmail-mcp",
   "version": "0.1.0",
-  "description": "MCP server for Gmail, Google Drive, and Google Calendar — search, read, send, and manage threads, files, and events.",
+  "description": "MCP server for Gmail, Google Drive, Google Calendar, and Google Tasks — search, read, send, and manage threads, files, events, and to-dos.",
   "type": "module",
   "main": "index.js",
   "bin": {
     "yt-gmail-mcp": "index.js"
+  },
+  "scripts": {
+    "test": "node --test --experimental-test-coverage"
   },
   "files": [
     "index.js"
@@ -15,6 +18,7 @@
     "gmail",
     "google-drive",
     "google-calendar",
+    "google-tasks",
     "model-context-protocol"
   ],
   "license": "MIT",
