@@ -1108,7 +1108,7 @@ async function main() {
     const tasks = google.tasks({ version: "v1", auth: oauth2Client });
 
     const server = new Server(
-        { name: "yt-gmail-mcp", version: "0.1.0" },
+        { name: "yt-gmail-mcp", version: "0.2.0" },
         {
             capabilities: { tools: {} },
             instructions:
