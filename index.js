@@ -420,8 +420,8 @@ const TaskListListsSchema = z.object({});
 const TaskListSchema = z.object({
     tasklist: z.string().optional().default("@default").describe("Task list id (default: '@default')"),
     status: z.enum(["needsAction", "completed"]).optional().describe("Filter by status"),
-    dueMax: z.string().optional().describe("RFC 3339 upper bound on due date"),
-    dueMin: z.string().optional().describe("RFC 3339 lower bound on due date"),
+    dueMax: z.string().optional().describe("Upper bound on due date: YYYY-MM-DD (normalized to UTC midnight) or full RFC 3339 timestamp"),
+    dueMin: z.string().optional().describe("Lower bound on due date: YYYY-MM-DD (normalized to UTC midnight) or full RFC 3339 timestamp"),
     maxResults: z.number().int().min(1).max(100).optional().default(20),
     pageToken: z.string().optional(),
 });
@@ -430,7 +430,7 @@ const TaskCreateSchema = z.object({
     tasklist: z.string().optional().default("@default"),
     title: z.string(),
     notes: z.string().optional(),
-    due: z.string().optional().describe("Due date YYYY-MM-DD (or full RFC 3339 timestamp)"),
+    due: z.string().optional().describe("Due date YYYY-MM-DD (normalized to UTC midnight T00:00:00.000Z) or full RFC 3339 timestamp"),
 });
 
 const TaskUpdateSchema = z.object({
@@ -438,7 +438,7 @@ const TaskUpdateSchema = z.object({
     task: z.string().describe("Task id"),
     title: z.string().optional(),
     notes: z.string().optional(),
-    due: z.string().optional().describe("Due date YYYY-MM-DD (or full RFC 3339 timestamp)"),
+    due: z.string().optional().describe("Due date YYYY-MM-DD (normalized to UTC midnight T00:00:00.000Z) or full RFC 3339 timestamp"),
     status: z.enum(["needsAction", "completed"]).optional().describe("Set to 'completed' to mark done"),
 });
 
@@ -997,8 +997,8 @@ function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, cr
                     tasklist: a.tasklist,
                     showCompleted: a.status ? a.status === "completed" : true,
                     showHidden: a.status ? a.status === "completed" : false,
-                    dueMax: a.dueMax,
-                    dueMin: a.dueMin,
+                    dueMax: a.dueMax ? normalizeDue(a.dueMax) : undefined,
+                    dueMin: a.dueMin ? normalizeDue(a.dueMin) : undefined,
                     maxResults: a.maxResults,
                     pageToken: a.pageToken,
                 });
