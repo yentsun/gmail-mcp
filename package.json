@@ -8,7 +8,7 @@
     "yt-gmail-mcp": "index.js"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test --experimental-test-coverage"
   },
   "files": [
     "index.js"

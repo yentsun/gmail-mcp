@@ -595,30 +595,8 @@ const TOOLS = [
 ];
 
 
-async function main() {
-    loadOAuthClient();
-
-    if (process.argv[2] === "auth") {
-        await authenticate();
-        console.error("Authentication completed.");
-        process.exit(0);
-    }
-
-    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-    const drive = google.drive({ version: "v3", auth: oauth2Client });
-    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
-    const tasks = google.tasks({ version: "v1", auth: oauth2Client });
-
-    const server = new Server(
-        { name: "yt-gmail-mcp", version: "0.1.0" },
-        { capabilities: { tools: {} } }
-    );
-
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: TOOLS,
-    }));
-
-    const executeToolCall = async (name, args) => {
+function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, credentialsPath }) {
+    return async (name, args) => {
         switch (name) {
             case "search_threads": {
                     const a = SearchThreadsSchema.parse(args);
@@ -853,7 +831,7 @@ async function main() {
                         content: [
                             {
                                 type: "text",
-                                text: `Re-auth completed. New credentials written to ${CREDENTIALS_PATH}. The in-memory OAuth client has been refreshed.`,
+                                text: `Re-auth completed. New credentials written to ${credentialsPath}. The in-memory OAuth client has been refreshed.`,
                             },
                         ],
                     };
@@ -1113,6 +1091,39 @@ async function main() {
                 throw new Error(`Unknown tool: ${name}`);
         }
     };
+}
+
+async function main() {
+    loadOAuthClient();
+
+    if (process.argv[2] === "auth") {
+        await authenticate();
+        console.error("Authentication completed.");
+        process.exit(0);
+    }
+
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    const drive = google.drive({ version: "v3", auth: oauth2Client });
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+    const tasks = google.tasks({ version: "v1", auth: oauth2Client });
+
+    const server = new Server(
+        { name: "yt-gmail-mcp", version: "0.1.0" },
+        { capabilities: { tools: {} } }
+    );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: TOOLS,
+    }));
+
+    const executeToolCall = createExecuteToolCall({
+        gmail,
+        drive,
+        calendar,
+        tasks,
+        authenticate,
+        credentialsPath: CREDENTIALS_PATH,
+    });
 
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const { name, arguments: args } = req.params;
@@ -1159,6 +1170,8 @@ export {
     sanitizeHeader,
     encodeHeader,
     normalizeDue,
+    isAuthError,
+    createExecuteToolCall,
     SearchThreadsSchema,
     GetThreadSchema,
     ThreadIdSchema,

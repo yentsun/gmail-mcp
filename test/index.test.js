@@ -8,6 +8,7 @@ import {
     getHeader,
     sanitizeHeader,
     encodeHeader,
+    isAuthError,
     TaskListSchema,
     TaskCreateSchema,
     TaskUpdateSchema,
@@ -31,6 +32,16 @@ test("normalizeDue passes through full RFC 3339 timestamps", () => {
 
 test("normalizeDue leaves non-date strings untouched", () => {
     assert.equal(normalizeDue("tomorrow"), "tomorrow");
+});
+
+test("isAuthError detects auth failures", () => {
+    assert.equal(isAuthError(new Error("invalid_grant")), true);
+    assert.equal(isAuthError(new Error("token has been expired")), true);
+    assert.equal(isAuthError(new Error("invalid credentials")), true);
+    assert.equal(isAuthError({ code: 401 }), true);
+    assert.equal(isAuthError({ status: 401 }), true);
+    assert.equal(isAuthError(new Error("some other error")), false);
+    assert.equal(isAuthError({ code: 404 }), false);
 });
 
 test("buildRawMessage produces base64url and sanitizes headers", () => {
@@ -70,6 +81,34 @@ test("htmlToText strips tags and decodes entities", () => {
         htmlToText("<p>Hello<br>World</p> &amp; goodbye"),
         "Hello\nWorld\n& goodbye"
     );
+    assert.equal(htmlToText("&#x41;&#x42;"), "AB");
+});
+
+test("buildRawMessage produces multipart/alternative with html and text", () => {
+    const raw = buildRawMessage({
+        to: ["a@example.com"],
+        subject: "Hi",
+        body: "plain",
+        htmlBody: "<b>bold</b>",
+    });
+    const decoded = Buffer.from(raw, "base64").toString("utf8");
+    assert.match(decoded, /Content-Type: multipart\/alternative/);
+    assert.match(decoded, /text\/plain/);
+    assert.match(decoded, /text\/html/);
+    assert.match(decoded, /plain/);
+    assert.match(decoded, /<b>bold<\/b>/);
+});
+
+test("buildRawMessage html-only body", () => {
+    const raw = buildRawMessage({
+        to: ["a@example.com"],
+        subject: "Hi",
+        body: "",
+        htmlBody: "<b>bold</b>",
+    });
+    const decoded = Buffer.from(raw, "base64").toString("utf8");
+    assert.match(decoded, /Content-Type: text\/html/);
+    assert.doesNotMatch(decoded, /multipart\/alternative/);
 });
 
 test("getHeader is case-insensitive", () => {
