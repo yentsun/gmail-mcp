@@ -94,7 +94,7 @@ This opens a browser where you sign in with your Google account. On success, tok
 | `GMAIL_MCP_CONFIG_DIR` | `~/.gmail-mcp` | Directory for OAuth keys and tokens |
 | `GMAIL_OAUTH_KEYS_PATH` | `$CONFIG_DIR/gcp-oauth.keys.json` | Path to OAuth client JSON |
 | `GMAIL_CREDENTIALS_PATH` | `$CONFIG_DIR/credentials.json` | Path to saved tokens |
-| `GMAIL_MCP_OAUTH_PORT` | `3000` | Starting port for the OAuth callback server (falls back to the next free port if taken) |
+| `GMAIL_MCP_OAUTH_PORT` | `3000` | Starting port for the OAuth callback server. `installed` (Desktop) credentials fall back to the next free port if taken; `web` credentials must match a registered redirect URI and do not fall back. |
 
 ### Custom port
 
@@ -145,7 +145,7 @@ If the MCP host starts while OAuth tokens are expired, the server fails to initi
 
 ### `EADDRINUSE` during re-auth
 
-The OAuth callback listener starts on port 3000 (or your `GMAIL_MCP_OAUTH_PORT`) and now automatically retries on the next free port if it's taken, so this should rarely surface. If it still fails, every port in range is in use — kill a conflicting process, or set `GMAIL_MCP_OAUTH_PORT` to a specific free port.
+The OAuth callback listener starts on port 3000 (or your `GMAIL_MCP_OAUTH_PORT`). For `installed` (Desktop) credentials it now automatically retries on the next free port if it's taken, so this should rarely surface. `web` credentials require the redirect URI to exactly match a registered value, so they don't fall back — there, register the port you use or set `GMAIL_MCP_OAUTH_PORT` to a registered free port.
 
 ### Batching tools triggers multiple re-auth flows
 

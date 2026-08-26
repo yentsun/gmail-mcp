@@ -40,6 +40,7 @@ const SCOPES = [
 
 let oauth2Client;
 let authInFlight = null;
+let oauthClientType = null;
 
 
 function loadOAuthClient() {
@@ -63,6 +64,13 @@ function loadOAuthClient() {
         );
         process.exit(1);
     }
+    // `installed` (Desktop) clients accept any loopback port; `web` clients
+    // require the redirect URI to exactly match a registered value.
+    oauthClientType = keysContent.installed
+        ? "installed"
+        : keysContent.web
+            ? "web"
+            : null;
     oauth2Client = new OAuth2Client(
         keys.client_id,
         keys.client_secret,
@@ -99,7 +107,9 @@ function augmentAuthError(err) {
 
 async function authenticate({ timeoutMs } = {}) {
     const startPort = OAUTH_PORT;
-    const maxPortAttempts = 100;
+    // `web` clients reject unregistered ports, so do not walk the port range
+    // for them — the configured OAUTH_PORT must match a registered URI.
+    const maxPortAttempts = oauthClientType === "web" ? 1 : 100;
     let server;
     let boundPort;
 
@@ -155,6 +165,9 @@ async function authenticate({ timeoutMs } = {}) {
             reject(new Error(message));
         };
 
+        server.on("error", (err) => {
+            fail(`OAuth callback server error: ${err?.message || err}`);
+        });
         server.on("request", async (req, res) => {
             if (!req.url?.startsWith("/oauth2callback")) return;
             const url = new URL(req.url, redirectUri);
