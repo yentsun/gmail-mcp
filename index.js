@@ -99,8 +99,11 @@ function loadOAuthClient() {
     }
 }
 
-function augmentAuthError(err) {
-    const hint = `(failed to bind callback port ${OAUTH_PORT}; set GMAIL_MCP_OAUTH_PORT to a free port to override)`;
+function augmentAuthError(err, port) {
+    const hint =
+        oauthClientType === "web"
+            ? `(failed to bind callback port ${port}; register ${port} as a redirect URI in Google Cloud Console, or set GMAIL_MCP_OAUTH_PORT to a registered and free port)`
+            : `(failed to bind callback port ${port}; set GMAIL_MCP_OAUTH_PORT to a free port to override)`;
     const msg = err?.message || String(err);
     return new Error(`OAuth callback bind failed: ${msg} ${hint}`);
 }
@@ -110,10 +113,11 @@ async function authenticate({ timeoutMs } = {}) {
     // `web` clients reject unregistered ports, so do not walk the port range
     // for them — the configured OAUTH_PORT must match a registered URI.
     const maxPortAttempts = oauthClientType === "web" ? 1 : 100;
+    const portCap = Math.min(65535, startPort + maxPortAttempts);
     let server;
     let boundPort;
 
-    for (let port = startPort; port < startPort + maxPortAttempts; port++) {
+    for (let port = startPort; port < portCap; port++) {
         const candidate = http.createServer();
         try {
             await new Promise((resolve, reject) => {
@@ -138,15 +142,17 @@ async function authenticate({ timeoutMs } = {}) {
                 candidate.close();
             } catch {}
             if (err && err.retry) continue;
-            throw augmentAuthError(err);
+            throw augmentAuthError(err, port);
         }
     }
 
     if (!server) {
+        const what =
+            oauthClientType === "web"
+                ? `port ${startPort} is unavailable; ensure it is free and registered as a redirect URI in Google Cloud Console.`
+                : `ports ${startPort}-${portCap - 1} are all in use.`;
         throw new Error(
-            `Failed to bind callback listener on ports ${startPort}-${
-                startPort + maxPortAttempts - 1
-            } (all in use). Set GMAIL_MCP_OAUTH_PORT to a free port and restart the MCP host.`
+            `Failed to bind callback listener (${what}) Set GMAIL_MCP_OAUTH_PORT to a free port and restart the MCP host.`
         );
     }
 
@@ -635,7 +641,7 @@ const TOOLS = [
     {
         name: "auth_status",
         description:
-            "Report OAuth auth health: whether credentials are present and unexpired, the authenticated email, configured scopes, credentials path, and callback port. Call before batching auth-requiring tools (e.g. Gmail + Calendar + Tasks) to preflight and avoid triggering a redundant re-auth.",
+            "Report OAuth auth health: whether credentials are present and their expiry (best-effort, derived from the JWT exp claim), the authenticated email, configured scopes, credentials path, and callback port. Call before batching auth-requiring tools (e.g. Gmail + Calendar + Tasks) to preflight and avoid triggering a redundant re-auth. Note: expiry is only available when the stored access token is a decodable JWT.",
         inputSchema: zodToJsonSchema(AuthStatusSchema),
     },
     {
