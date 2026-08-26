@@ -9,6 +9,9 @@ import {
     sanitizeHeader,
     encodeHeader,
     isAuthError,
+    singleFlightAuthenticate,
+    decodeJwtPayload,
+    computeAuthStatus,
     TaskListSchema,
     TaskCreateSchema,
     TaskUpdateSchema,
@@ -157,4 +160,81 @@ test("TaskMoveSchema allows parent/previous or neither", () => {
     const moved = TaskMoveSchema.parse({ task: "t", parent: "p", previous: "q" });
     assert.equal(moved.parent, "p");
     assert.equal(moved.previous, "q");
+});
+
+test("decodeJwtPayload decodes a standard JWT payload", () => {
+    const payload = { sub: "123", email: "a@example.com", exp: 2000000000 };
+    const token = `h.${Buffer.from(JSON.stringify(payload))
+        .toString("base64url")}.s`;
+    assert.deepEqual(decodeJwtPayload(token), payload);
+});
+
+test("decodeJwtPayload returns null for malformed tokens", () => {
+    assert.equal(decodeJwtPayload(null), null);
+    assert.equal(decodeJwtPayload("not-a-jwt"), null);
+    assert.equal(decodeJwtPayload("a."), null);
+    assert.equal(decodeJwtPayload("a.!.c"), null);
+});
+
+test("computeAuthStatus reports unauthenticated when no client", () => {
+    const status = computeAuthStatus(undefined);
+    assert.equal(status.authenticated, false);
+    assert.equal(status.expired, true);
+    assert.equal(status.email, null);
+    assert.ok(Array.isArray(status.scopes));
+});
+
+test("computeAuthStatus reports unexpired session with email", () => {
+    const payload = { email: "user@example.com", exp: Math.floor(Date.now() / 1000) + 3600 };
+    const client = {
+        credentials: {
+            access_token: `h.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`,
+            id_token: `h.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`,
+        },
+    };
+    const status = computeAuthStatus(client);
+    assert.equal(status.authenticated, true);
+    assert.equal(status.email, "user@example.com");
+    assert.ok(status.expiresAt);
+    assert.equal(status.expired, false);
+});
+
+test("computeAuthStatus marks expired token", () => {
+    const payload = { email: "user@example.com", exp: Math.floor(Date.now() / 1000) - 60 };
+    const client = {
+        credentials: {
+            access_token: `h.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`,
+        },
+    };
+    const status = computeAuthStatus(client);
+    assert.equal(status.authenticated, true);
+    assert.equal(status.expired, true);
+});
+
+test("computeAuthStatus prefers id_token email over access token", () => {
+    const tokenFor = (email) =>
+        `h.${Buffer.from(JSON.stringify({ email })).toString("base64url")}.s`;
+    const client = {
+        credentials: {
+            access_token: tokenFor("access@example.com"),
+            id_token: tokenFor("id@example.com"),
+        },
+    };
+    assert.equal(computeAuthStatus(client).email, "id@example.com");
+});
+
+test("singleFlightAuthenticate de-duplicates concurrent calls and releases after settle", async () => {
+    let calls = 0;
+    const fakeAuth = async () => {
+        calls += 1;
+        await new Promise((r) => setTimeout(r, 25));
+        return "ok";
+    };
+    const first = singleFlightAuthenticate({}, fakeAuth);
+    const second = singleFlightAuthenticate({}, fakeAuth);
+    assert.equal(await first, "ok");
+    assert.equal(await second, "ok");
+    assert.equal(calls, 1);
+    await singleFlightAuthenticate({}, fakeAuth);
+    assert.equal(calls, 2);
 });

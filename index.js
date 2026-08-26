@@ -39,6 +39,7 @@ const SCOPES = [
 ];
 
 let oauth2Client;
+let authInFlight = null;
 
 
 function loadOAuthClient() {
@@ -90,55 +91,85 @@ function loadOAuthClient() {
     }
 }
 
+function augmentAuthError(err) {
+    const hint = `(failed to bind callback port ${OAUTH_PORT}; set GMAIL_MCP_OAUTH_PORT to a free port to override)`;
+    const msg = err?.message || String(err);
+    return new Error(`OAuth callback bind failed: ${msg} ${hint}`);
+}
+
 async function authenticate({ timeoutMs } = {}) {
+    const startPort = OAUTH_PORT;
+    const maxPortAttempts = 100;
+    let server;
+    let boundPort;
+
+    for (let port = startPort; port < startPort + maxPortAttempts; port++) {
+        const candidate = http.createServer();
+        try {
+            await new Promise((resolve, reject) => {
+                const onError = (err) => {
+                    candidate.removeListener("listening", onListening);
+                    if (err.code === "EADDRINUSE") reject({ retry: true });
+                    else reject(err);
+                };
+                const onListening = () => {
+                    candidate.removeListener("error", onError);
+                    resolve();
+                };
+                candidate.once("error", onError);
+                candidate.once("listening", onListening);
+                candidate.listen(port);
+            });
+            server = candidate;
+            boundPort = port;
+            break;
+        } catch (err) {
+            try {
+                candidate.close();
+            } catch {}
+            if (err && err.retry) continue;
+            throw augmentAuthError(err);
+        }
+    }
+
+    if (!server) {
+        throw new Error(
+            `Failed to bind callback listener on ports ${startPort}-${
+                startPort + maxPortAttempts - 1
+            } (all in use). Set GMAIL_MCP_OAUTH_PORT to a free port and restart the MCP host.`
+        );
+    }
+
     return new Promise((resolve, reject) => {
-        const server = http.createServer();
+        const redirectUri = `http://localhost:${boundPort}/oauth2callback`;
         let timer;
-        let authUrl;
+        let browserOpened = false;
         const cleanup = () => {
             if (timer) clearTimeout(timer);
             try {
                 server.close();
             } catch {}
         };
-        server.on("error", (e) => {
+        const fail = (message) => {
             cleanup();
-            reject(e);
-        });
-        server.listen(OAUTH_PORT, () => {
-            authUrl = oauth2Client.generateAuthUrl({
-                access_type: "offline",
-                prompt: "consent",
-                scope: SCOPES,
-            });
-            console.error("Visit this URL to authenticate:");
-            console.error(authUrl);
-            open(authUrl).catch(() => {});
-            if (timeoutMs) {
-                timer = setTimeout(() => {
-                    cleanup();
-                    reject(
-                        new Error(
-                            `Auth timed out after ${timeoutMs}ms (browser flow not completed). URL: ${authUrl}`
-                        )
-                    );
-                }, timeoutMs);
-            }
-        });
+            reject(new Error(message));
+        };
 
         server.on("request", async (req, res) => {
             if (!req.url?.startsWith("/oauth2callback")) return;
-            const url = new URL(req.url, REDIRECT_URI);
+            const url = new URL(req.url, redirectUri);
             const code = url.searchParams.get("code");
             if (!code) {
                 res.writeHead(400);
                 res.end("No code received");
-                cleanup();
-                reject(new Error("No code received"));
+                fail("No code received");
                 return;
             }
             try {
-                const { tokens } = await oauth2Client.getToken(code);
+                const { tokens } = await oauth2Client.getToken({
+                    code,
+                    redirect_uri: redirectUri,
+                });
                 oauth2Client.setCredentials(tokens);
                 fs.writeFileSync(
                     CREDENTIALS_PATH,
@@ -151,11 +182,80 @@ async function authenticate({ timeoutMs } = {}) {
             } catch (e) {
                 res.writeHead(500);
                 res.end("Authentication failed");
-                cleanup();
-                reject(e);
+                fail(`Authentication failed: ${e.message}`);
             }
         });
+
+        const authUrl = oauth2Client.generateAuthUrl({
+            access_type: "offline",
+            prompt: "consent",
+            scope: SCOPES,
+            redirect_uri: redirectUri,
+        });
+        console.error(
+            `Visit this URL to authenticate (callback on http://localhost:${boundPort}):`
+        );
+        console.error(authUrl);
+        open(authUrl)
+            .then(() => {
+                browserOpened = true;
+            })
+            .catch(() => {});
+        if (timeoutMs) {
+            timer = setTimeout(() => {
+                fail(
+                    `Auth timed out after ${timeoutMs}ms (browser flow not completed; browser opened: ${browserOpened}; callback port: ${boundPort}; set GMAIL_MCP_OAUTH_PORT to a free port to override). URL: ${authUrl}`
+                );
+            }, timeoutMs);
+        }
     });
+}
+
+async function singleFlightAuthenticate(opts, authFn = authenticate) {
+    if (authInFlight) return authInFlight;
+    authInFlight = authFn(opts).finally(() => {
+        authInFlight = null;
+    });
+    return authInFlight;
+}
+
+function decodeJwtPayload(token) {
+    if (!token || typeof token !== "string") return null;
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    try {
+        return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    } catch {
+        return null;
+    }
+}
+
+function computeAuthStatus(client) {
+    const creds = client?.credentials;
+    const authenticated = Boolean(creds && creds.access_token);
+    const access = decodeJwtPayload(creds?.access_token);
+    const idToken = decodeJwtPayload(creds?.id_token);
+    const email = idToken?.email || access?.email || null;
+    const exp = access?.exp || idToken?.exp || null;
+    const expiresAt = exp ? new Date(exp * 1000).toISOString() : null;
+    const expired = authenticated
+        ? expiresAt == null
+            ? false
+            : Date.now() >= Date.parse(expiresAt)
+        : true;
+    return {
+        authenticated,
+        email,
+        expiresAt,
+        expired,
+        scopes: SCOPES,
+        credentialsPath: CREDENTIALS_PATH,
+        oauthPort: OAUTH_PORT,
+    };
+}
+
+function getAuthStatus() {
+    return computeAuthStatus(oauth2Client);
 }
 
 
@@ -350,6 +450,8 @@ const ListLabelsSchema = z.object({});
 
 const ReauthSchema = z.object({});
 
+const AuthStatusSchema = z.object({});
+
 const DraftSchema = z.object({
     to: z.array(z.string()).min(1),
     subject: z.string(),
@@ -518,6 +620,12 @@ const TOOLS = [
         inputSchema: zodToJsonSchema(ReauthSchema),
     },
     {
+        name: "auth_status",
+        description:
+            "Report OAuth auth health: whether credentials are present and unexpired, the authenticated email, configured scopes, credentials path, and callback port. Call before batching auth-requiring tools (e.g. Gmail + Calendar + Tasks) to preflight and avoid triggering a redundant re-auth.",
+        inputSchema: zodToJsonSchema(AuthStatusSchema),
+    },
+    {
         name: "drive_search",
         description: "Search Google Drive files using Drive query syntax. Returns id, name, mimeType, modifiedTime, webViewLink. Trashed files are excluded.",
         inputSchema: zodToJsonSchema(DriveSearchSchema),
@@ -595,7 +703,7 @@ const TOOLS = [
 ];
 
 
-function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, credentialsPath }) {
+function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, getAuthStatus, credentialsPath }) {
     return async (name, args) => {
         switch (name) {
             case "search_threads": {
@@ -832,6 +940,17 @@ function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, cr
                             {
                                 type: "text",
                                 text: `Re-auth completed. New credentials written to ${credentialsPath}. The in-memory OAuth client has been refreshed.`,
+                            },
+                        ],
+                    };
+                }
+                case "auth_status": {
+                    AuthStatusSchema.parse(args);
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: JSON.stringify(getAuthStatus(), null, 2),
                             },
                         ],
                     };
@@ -1125,7 +1244,8 @@ async function main() {
         drive,
         calendar,
         tasks,
-        authenticate,
+        authenticate: singleFlightAuthenticate,
+        getAuthStatus,
         credentialsPath: CREDENTIALS_PATH,
     });
 
@@ -1134,9 +1254,9 @@ async function main() {
         try {
             return await executeToolCall(name, args);
         } catch (e) {
-            if (name !== "reauth" && isAuthError(e)) {
+            if (name !== "reauth" && name !== "auth_status" && isAuthError(e)) {
                 try {
-                    await authenticate({ timeoutMs: 5 * 60 * 1000 });
+                    await singleFlightAuthenticate({ timeoutMs: 5 * 60 * 1000 });
                     return await executeToolCall(name, args);
                 } catch (retryErr) {
                     return {
@@ -1176,6 +1296,11 @@ export {
     encodeHeader,
     normalizeDue,
     isAuthError,
+    authenticate,
+    singleFlightAuthenticate,
+    decodeJwtPayload,
+    computeAuthStatus,
+    getAuthStatus,
     createExecuteToolCall,
     SearchThreadsSchema,
     GetThreadSchema,
@@ -1183,6 +1308,7 @@ export {
     LabelThreadSchema,
     ListLabelsSchema,
     ReauthSchema,
+    AuthStatusSchema,
     DraftSchema,
     DriveSearchSchema,
     DriveGetFileSchema,
