@@ -113,7 +113,8 @@ async function authenticate({ timeoutMs } = {}) {
     // `web` clients reject unregistered ports, so do not walk the port range
     // for them — the configured OAUTH_PORT must match a registered URI.
     const maxPortAttempts = oauthClientType === "web" ? 1 : 100;
-    const portCap = Math.min(65535, startPort + maxPortAttempts);
+    // Clamp at 65536 (not 65535) so the exclusive loop below can attempt port 65535.
+    const portCap = Math.min(65536, startPort + maxPortAttempts);
     let server;
     let boundPort;
 
