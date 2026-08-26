@@ -41,6 +41,7 @@ const SCOPES = [
 let oauth2Client;
 let authInFlight = null;
 let oauthClientType = null;
+let lastAuthPort = OAUTH_PORT;
 
 
 function loadOAuthClient() {
@@ -157,6 +158,8 @@ async function authenticate({ timeoutMs } = {}) {
         );
     }
 
+    lastAuthPort = boundPort;
+
     return new Promise((resolve, reject) => {
         const redirectUri = `http://localhost:${boundPort}/oauth2callback`;
         let timer;
@@ -270,7 +273,7 @@ function computeAuthStatus(client) {
         expired,
         scopes: SCOPES,
         credentialsPath: CREDENTIALS_PATH,
-        oauthPort: OAUTH_PORT,
+        oauthPort: lastAuthPort,
     };
 }
 
@@ -723,7 +726,7 @@ const TOOLS = [
 ];
 
 
-function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, getAuthStatus, credentialsPath }) {
+function createExecuteToolCall({ gmail, drive, calendar, tasks, authenticate, getAuthStatus = () => computeAuthStatus(oauth2Client), credentialsPath }) {
     return async (name, args) => {
         switch (name) {
             case "search_threads": {
